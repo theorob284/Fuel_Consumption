@@ -15,43 +15,38 @@ def merge_speed_columns(
     gps_col: str = GPS_COL_DEFAULT,
     obd_col: str = OBD_COL_DEFAULT,
     merged_col: str = MERGED_COL_DEFAULT,
+    drop_original: bool = True,
 ) -> Path:
     """
     Read a CSV, merge complementary GPS/OBD speed columns into a new column, and save.
 
-    The merge rule is: use GPS when available; otherwise use OBD.
-    Both source columns are preserved; a new column is added.
+    Merge rule: use GPS when available; otherwise use OBD.
+    By default the original source columns are removed (set drop_original=False to keep).
     """
-
     if output_csv_path is None:
         output_csv_path = input_csv_path.with_name(
             f"{input_csv_path.stem}_merged{input_csv_path.suffix}"
         )
 
-    # Read CSV with common encodings; fallback to utf-8 if needed
-    # low_memory=False to avoid mixed dtypes on large files
     df = pd.read_csv(input_csv_path, low_memory=False)
 
-    # Ensure columns exist
     missing = [c for c in [gps_col, obd_col] if c not in df.columns]
     if missing:
         raise KeyError(
             f"Missing required columns: {missing}. Expected '{gps_col}' and '{obd_col}'."
         )
 
-    # Convert to numeric safely
     gps_series = pd.to_numeric(df[gps_col], errors="coerce")
     obd_series = pd.to_numeric(df[obd_col], errors="coerce")
 
-    # Prefer GPS; if NaN, take OBD
-    merged_series = gps_series.combine_first(obd_series)
+    df[merged_col] = gps_series.combine_first(obd_series).round(2)
 
-    df[merged_col] = merged_series
+    # NEW: drop the originals if requested
+    if drop_original:
+        df.drop(columns=[gps_col, obd_col], inplace=True, errors="ignore")
 
-    # Ensure output directory exists, then write output; keep same CSV structure
     output_csv_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv_path, index=False)
-
     return output_csv_path
 
 
@@ -92,6 +87,18 @@ def main() -> None:
         type=str,
         default="TRACKS.MUNIC.SPEED_MERGED (km/h)",
         help=f"New merged column name (default: {MERGED_COL_DEFAULT})",
+    )
+
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--keep-originals",
+        action="store_true",
+        help="Keep the original GPS/OBD speed columns (default is to drop them).",
+    )
+    group.add_argument(
+        "--drop-originals",
+        action="store_true",
+        help="Explicitly drop the original GPS/OBD speed columns.",
     )
 
     args = parser.parse_args()
@@ -138,6 +145,7 @@ def main() -> None:
         gps_col=args.gps_col,
         obd_col=args.obd_col,
         merged_col=args.merged_col,
+        drop_original=drop_original,
     )
     print(f"Written: {out}")
 
