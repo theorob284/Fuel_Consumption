@@ -7,7 +7,7 @@ def main():
     Main entrypoint — merges all CSV files in 'fuel_data/' into 'fuel_data_merged/'.
     """
     input_dir = Path("fuel_data")
-    output_dir = Path("fuel_data_merged")
+    output_dir = Path("fuel_data_speed_merged")
 
     # Make sure the input folder exists
     if not input_dir.exists():
