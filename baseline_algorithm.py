@@ -1,32 +1,81 @@
 import pandas as pd
-import numpy as np
 import os
+import glob
 
-input_file  = "fuel_data_speed_merged/863609060548678_merged.csv"
+input_folder = "fuel_data_speed_merged"
 output_folder = "processed_data"
 
 os.makedirs(output_folder, exist_ok=True)
 
-df = pd.read_csv(input_file)
-df["time"] = pd.to_datetime(df["time"])
-df = df.sort_values("time").set_index("time")
+input_files = glob.glob(os.path.join(input_folder, "*.csv"))
 
-df["fuel"] = df["TRACKS.MUNIC.MDI_OBD_FUEL (ml)"].ffill().fillna(0)
-df["speed"] = df["TRACKS.MUNIC.SPEED_MERGED (km/h)"].interpolate()
+for input_file in input_files:
 
-window = "30s"
-df_window = df.resample(window).agg({
-    "fuel": "last",
-    "speed": "mean"
-})
+    df = pd.read_csv(input_file)
 
-df_window["fuel_used_ml"] = df_window["fuel"].diff().fillna(0).clip(lower=0)
-df_window["speed_smoothed"] = df_window["speed"].rolling(3, min_periods=1).mean()
+    time_col = "time" if "time" in df.columns else "received_at"
+    df[time_col] = pd.to_datetime(df[time_col], format="mixed")
 
-# Nur Dateiname verwenden
-base_name = os.path.basename(input_file)
-new_name = base_name.replace(".csv", "_processed.csv")
-output_file = os.path.join(output_folder, new_name)
+    fuel_cols = [c for c in df.columns if "OBD_FUEL" in c]
 
-df_window.to_csv(output_file)
-print(f"Datei erfolgreich gespeichert: {output_file}")
+    if not fuel_cols:
+        print(f"⚠️ no fuel column in {input_file}.")
+        continue
+
+    fuel_col = fuel_cols[0]
+    df["fuel"] = df[fuel_col].ffill().fillna(0)
+
+    speed_cols = [c for c in df.columns if "SPEED" in c]
+
+    speed_col = speed_cols[0] if speed_cols else None
+    if speed_col is None:
+        print(f"⚠️ no speed column in {input_file}.")
+        continue
+
+    results = []
+    prev_time = None
+    prev_fuel = None
+
+    for idx, row in df.iterrows():
+        current_time = row[time_col]
+        current_fuel = row["fuel"]
+        speed = row[speed_col]
+
+        if prev_time is None:
+            prev_time = current_time
+            prev_fuel = current_fuel
+            continue
+
+        if current_fuel > prev_fuel:  
+            fuel_used = current_fuel - prev_fuel
+            dt_seconds = (current_time - prev_time).total_seconds()
+
+            fuel_per_second = fuel_used / dt_seconds if dt_seconds > 0 else 0
+
+            if speed > 0:
+                fuel_liters = fuel_used / 1000
+                distance_km = speed * (dt_seconds / 3600)
+                l_per_100km = (fuel_liters / distance_km) * 100 if distance_km > 0 else None
+            else:
+                l_per_100km = None
+
+            results.append({
+                "time": current_time,
+                "speed_kmh": speed,
+                "fuel_used_ml": fuel_used,
+                "duration_s": dt_seconds,
+                "fuel_ml_per_s": fuel_per_second,
+                "fuel_L_per_100km": l_per_100km
+            })
+
+            prev_time = current_time
+            prev_fuel = current_fuel
+
+    output_file = os.path.join(
+        output_folder, 
+        os.path.basename(input_file).replace(".csv", "_processed.csv")
+    )
+
+    pd.DataFrame(results).to_csv(output_file, index=False)
+
+    print(f"✅ {output_file}")
