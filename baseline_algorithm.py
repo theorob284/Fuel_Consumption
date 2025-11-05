@@ -1,81 +1,110 @@
 import pandas as pd
+import numpy as np
 import os
 import glob
+import matplotlib.pyplot as plt
 
-input_folder = "fuel_data_speed_merged"
-output_folder = "processed_data"
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
+from sklearn.svm import SVR
+from sklearn.metrics import r2_score, mean_squared_error
 
-os.makedirs(output_folder, exist_ok=True)
+# === CONFIG ===
+input_folder = "processed_data"
+files = glob.glob(os.path.join(input_folder, "*.csv"))
 
-input_files = glob.glob(os.path.join(input_folder, "*.csv"))
+if not files:
+    raise FileNotFoundError("⚠️ Keine verarbeiteten Dateien im 'processed_data' Ordner gefunden!")
 
-for input_file in input_files:
+# === LOAD & COMBINE ===
+dfs = [pd.read_csv(f) for f in files]
+data = pd.concat(dfs, ignore_index=True)
 
-    df = pd.read_csv(input_file)
+# === FLEXIBLE SPALTENNAMEN ===
+if "speed_kmh" in data.columns:
+    speed_col = "speed_kmh"
+elif "TRACKS.MUNIC.SPEED_MERGED (km/h)" in data.columns:
+    speed_col = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
+else:
+    raise KeyError("❌ Keine Spalte für Geschwindigkeit gefunden!")
 
-    time_col = "time" if "time" in df.columns else "received_at"
-    df[time_col] = pd.to_datetime(df[time_col], format="mixed")
+if "fuel_ml_per_s" in data.columns:
+    fuel_col = "fuel_ml_per_s"
+elif "fuel_rate" in data.columns:
+    fuel_col = "fuel_rate"
+else:
+    raise KeyError("❌ Keine Spalte für Kraftstoffrate gefunden!")
 
-    fuel_cols = [c for c in df.columns if "OBD_FUEL" in c]
+# === FILTER ===
+data = data.dropna(subset=[speed_col, fuel_col])
+data = data[(data[speed_col] > 5) & (data[fuel_col] > 0) & (data[fuel_col] < 50)]
 
-    if not fuel_cols:
-        print(f"⚠️ no fuel column in {input_file}.")
-        continue
+print(f"✅ Datensätze nach Filterung: {len(data)}")
 
-    fuel_col = fuel_cols[0]
-    df["fuel"] = df[fuel_col].ffill().fillna(0)
+# === GLÄTTUNG ===
+data[speed_col] = data[speed_col].rolling(3, min_periods=1).mean()
+data[fuel_col] = data[fuel_col].rolling(3, min_periods=1).mean()
 
-    speed_cols = [c for c in df.columns if "SPEED" in c]
+X = data[[speed_col]].values
+y = data[fuel_col].values
 
-    speed_col = speed_cols[0] if speed_cols else None
-    if speed_col is None:
-        print(f"⚠️ no speed column in {input_file}.")
-        continue
+# === MODEL 1: LINEARE REGRESSION ===
+lin_reg = LinearRegression()
+lin_reg.fit(X, y)
+y_pred_lin = lin_reg.predict(X)
 
-    results = []
-    prev_time = None
-    prev_fuel = None
+# === MODEL 2: POLYNOMIAL REGRESSION (Grad 3) ===
+poly = PolynomialFeatures(degree=3)
+X_poly = poly.fit_transform(X)
+poly_reg = LinearRegression()
+poly_reg.fit(X_poly, y)
+y_pred_poly = poly_reg.predict(X_poly)
 
-    for idx, row in df.iterrows():
-        current_time = row[time_col]
-        current_fuel = row["fuel"]
-        speed = row[speed_col]
+# === MODEL 3: SUPPORT VECTOR REGRESSION (RBF-Kernel) auf Stichprobe ===
+sample_for_svr = data.sample(n=min(50000, len(data)), random_state=42)
+print(f"🎯 SVR wird auf einer Stichprobe von {len(sample_for_svr)} Punkten trainiert.")
 
-        if prev_time is None:
-            prev_time = current_time
-            prev_fuel = current_fuel
-            continue
+X_svr = sample_for_svr[[speed_col]].values
+y_svr = sample_for_svr[fuel_col].values
 
-        if current_fuel > prev_fuel:  
-            fuel_used = current_fuel - prev_fuel
-            dt_seconds = (current_time - prev_time).total_seconds()
+scaler_X = StandardScaler()
+scaler_y = StandardScaler()
 
-            fuel_per_second = fuel_used / dt_seconds if dt_seconds > 0 else 0
+X_scaled = scaler_X.fit_transform(X_svr)
+y_scaled = scaler_y.fit_transform(y_svr.reshape(-1, 1)).ravel()
 
-            if speed > 0:
-                fuel_liters = fuel_used / 1000
-                distance_km = speed * (dt_seconds / 3600)
-                l_per_100km = (fuel_liters / distance_km) * 100 if distance_km > 0 else None
-            else:
-                l_per_100km = None
+svr = SVR(kernel='rbf', C=100, gamma=0.1, epsilon=0.01)
+svr.fit(X_scaled, y_scaled)
 
-            results.append({
-                "time": current_time,
-                "speed_kmh": speed,
-                "fuel_used_ml": fuel_used,
-                "duration_s": dt_seconds,
-                "fuel_ml_per_s": fuel_per_second,
-                "fuel_L_per_100km": l_per_100km
-            })
+y_pred_svr = scaler_y.inverse_transform(svr.predict(X_scaled).reshape(-1, 1)).ravel()
 
-            prev_time = current_time
-            prev_fuel = current_fuel
+# === METRIKEN ===
+def metrics(name, y_true, y_pred):
+    print(f"\n📊 {name}")
+    print(f"R²: {r2_score(y_true, y_pred):.3f}")
+    print(f"MSE: {mean_squared_error(y_true, y_pred):.3f}")
 
-    output_file = os.path.join(
-        output_folder, 
-        os.path.basename(input_file).replace(".csv", "_processed.csv")
-    )
+metrics("Lineare Regression", y, y_pred_lin)
+metrics("Polynomiale Regression (Grad 3)", y, y_pred_poly)
+metrics("Support Vector Regression (RBF, Stichprobe)", y_svr, y_pred_svr)
 
-    pd.DataFrame(results).to_csv(output_file, index=False)
+# === VISUALISIERUNG ===
+plt.figure(figsize=(10,6))
+plt.scatter(data[speed_col], y, alpha=0.3, label="Tatsächlicher Verbrauch", s=10)
 
-    print(f"✅ {output_file}")
+speeds = np.linspace(data[speed_col].min(), data[speed_col].max(), 200).reshape(-1, 1)
+plt.plot(speeds, lin_reg.predict(speeds), color="red", label="Linear")
+plt.plot(speeds, poly_reg.predict(poly.transform(speeds)), color="orange", label="Polynomial (3. Grad)")
+plt.plot(
+    speeds,
+    scaler_y.inverse_transform(svr.predict(scaler_X.transform(speeds)).reshape(-1,1)),
+    color="green", label="SVR (RBF, Stichprobe)"
+)
+
+plt.xlabel("Geschwindigkeit [km/h]")
+plt.ylabel("Verbrauch [ml/s]")
+plt.title("Vergleich verschiedener Modelle für den Verbrauch")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
