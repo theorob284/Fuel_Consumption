@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+import time
 
 # ----- column names -----
 SPEED_COL  = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
@@ -15,9 +16,9 @@ RPM_COL_CANDIDATES = [
     "TRACKS.MUNIC.MDI_OBD_RPM (rpm)", "RPM", "TRACKS.MUNIC.RPM", "MDI_RPM"
 ]
 
-# ----- defaults (can be overridden by caller) -----
+# ----- defaults-----
 ROLL_WIN = 5
-N_ESTIMATORS = 400
+N_ESTIMATORS = 100
 RANDOM_STATE = 42
 
 def _find_rpm_column(df: pd.DataFrame):
@@ -80,65 +81,135 @@ def train_rf(
     n_estimators: int = N_ESTIMATORS,
     random_state: int = RANDOM_STATE,
 ):
-    """Train RF on the given CSV and save model. Returns metrics dict."""
+    """
+    Train a Random Forest on the combined CSV and save:
+      - model (model_out, .pkl)
+      - overlay plot (model_out with _overlay.png)
+    Returns a summary dict with metrics and counts expected by main.py.
+    """
+    import time, math
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    from pathlib import Path
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+    import joblib
+
+    # ---------------- LOAD & FEATURE ENGINEERING ----------------
     df = pd.read_csv(input_csv, low_memory=False)
+    # _build_features must return (df_with_features, feature_cols)
     df, feature_cols = _build_features(df)
 
+    # temporal split keeps order (less leakage than random shuffle on trips)
     X_train, X_test, y_train, y_test = _temporal_split(df, feature_cols, test_size=0.2)
 
+    # downcast to reduce RAM & speed
+    X_train = X_train.astype("float32")
+    X_test  = X_test.astype("float32")
+    y_train = y_train.astype("float32")
+    y_test  = y_test.astype("float32")
+
+    # ---------------- TRAIN ----------------
     rf = RandomForestRegressor(
         n_estimators=n_estimators,
-        max_depth=None,
-        min_samples_leaf=2,
+        max_depth=16,
+        min_samples_leaf=5,
+        max_features="sqrt",
+        n_jobs=1,  # safer on laptops; switch to -1 if you have plenty of RAM
         random_state=random_state,
-        n_jobs=-1,
+        verbose=1,
     )
-    rf.fit(X_train, y_train)
-    y_pred = rf.predict(X_test)
 
-    # metrics (RMSE computed manually for sklearn compat)
-    r2  = r2_score(y_test, y_pred)
-    mae = mean_absolute_error(y_test, y_pred)
-    mse = mean_squared_error(y_test, y_pred)
-    rmse = math.sqrt(mse)
+    print(f"\nTraining RF on {len(X_train):,} rows / {len(feature_cols)} features with {n_estimators} trees…")
+    t0 = time.time()
+    rf.fit(X_train, y_train)
+    print(f"✅ Training complete in {time.time() - t0:.1f}s")
+
+    # ---------------- EVALUATE ----------------
+    y_pred = rf.predict(X_test)
+    r2   = r2_score(y_test, y_pred)
+    mae  = mean_absolute_error(y_test, y_pred)
+    rmse = math.sqrt(mean_squared_error(y_test, y_pred))
 
     importances = pd.Series(rf.feature_importances_, index=feature_cols).sort_values(ascending=False)
 
-    # save model
+    # ---------------- SAVE MODEL ----------------
     model_out = Path(model_out)
     model_out.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump({"model": rf, "features": feature_cols}, model_out)
+    print(f"💾 Model saved to: {model_out}")
 
-    if plots:
-        # Predicted vs Actual
-        plt.figure(figsize=(8, 6))
-        plt.scatter(y_test, y_pred, s=8, alpha=0.5)
-        plt.xlabel("Actual fuel rate (ml/s)")
-        plt.ylabel("Predicted fuel rate (ml/s)")
-        plt.title("Random Forest — Predicted vs Actual")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.tight_layout()
-        plt.show()
+    # ---------------- HELPER: BUILD PREDICTION FEATURES FOR CURVE ----------------
+    def _curve_features(speed_vals_kmh: np.ndarray) -> pd.DataFrame:
+        cur = pd.DataFrame({SPEED_COL: speed_vals_kmh})
+        # default engineered features (match _build_features)
+        cur["acceleration"] = 0.0
+        cur["speed_roll"]   = cur[SPEED_COL]
+        cur["acc_roll"]     = 0.0
+        cur["speed_sq"]     = cur[SPEED_COL] ** 2
+        # ensure exact order/columns model expects
+        return cur.reindex(columns=feature_cols, fill_value=0.0).astype("float32")
 
-        # Residuals
-        plt.figure(figsize=(8, 5))
-        residuals = y_test - y_pred
-        plt.hist(residuals, bins=40)
-        plt.xlabel("Residual (Actual - Predicted) ml/s")
-        plt.ylabel("Count")
-        plt.title("Residuals Distribution")
-        plt.grid(True, linestyle="--", alpha=0.4)
-        plt.tight_layout()
-        plt.show()
+    # ---------------- OVERLAY PLOT (ONLY) ----------------
+    # prediction curve up to 160 km/h
+    speed_range = np.arange(0, 161).astype(float)  # 0..160 inclusive
+    pred_curve = rf.predict(_curve_features(speed_range))
 
-    summary = {
+    # real data: keep within 0..160, bin by 1 km/h and smooth lightly
+    plot_df = df[[SPEED_COL, TARGET_COL]].dropna().copy()
+    plot_df["speed_bin"] = plot_df[SPEED_COL].round().astype(int)
+    plot_df = plot_df[(plot_df["speed_bin"] >= 0) & (plot_df["speed_bin"] <= 160)]
+
+    real_avg = (
+        plot_df.groupby("speed_bin")[TARGET_COL]
+        .mean()
+        .reset_index()
+        .sort_values("speed_bin")
+    )
+    # 3-point centered rolling mean for a clean line
+    real_avg["smooth"] = real_avg[TARGET_COL].rolling(3, center=True, min_periods=1).mean()
+
+    plt.figure(figsize=(12, 6))
+    # raw scatter (very transparent so it doesn't dominate)
+    plt.scatter(
+        plot_df[SPEED_COL], plot_df[TARGET_COL],
+        s=5, alpha=0.02, color="steelblue", label="Raw data"
+    )
+    # smoothed real average
+    plt.plot(
+        real_avg["speed_bin"], real_avg["smooth"],
+        color="tab:blue", linewidth=2, label="Real average (smoothed)"
+    )
+    # model prediction curve
+    plt.plot(
+        speed_range, pred_curve,
+        color="orange", linewidth=2, label="Model prediction"
+    )
+
+    # labels / limits / legend
+    plt.xlabel("Speed (km/h)")
+    plt.ylabel("Fuel Rate (ml/s)")
+    plt.title("Fuel vs Speed — Real Data vs Model")
+    plt.xlim(0, 160)
+    plt.grid(True, alpha=0.25)
+    plt.legend(loc="upper left")
+
+    overlay_path = model_out.parent / f"{model_out.stem}_overlay.png"
+    plt.savefig(overlay_path, dpi=300)
+    plt.close()
+    print(f"📷 Overlay curve saved to: {overlay_path}")
+
+    # ---------------- RETURN SUMMARY ----------------
+    return {
         "features": feature_cols,
         "r2": r2,
         "mae": mae,
         "rmse": rmse,
         "importances": importances,
         "model_path": str(model_out),
+        "overlay_path": str(overlay_path),
         "n_train": len(X_train),
         "n_test": len(X_test),
     }
-    return summary
+
