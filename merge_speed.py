@@ -9,24 +9,10 @@ GPS_COL_DEFAULT = "TRACKS.MUNIC.GPS_SPEED (km/h)"
 OBD_COL_DEFAULT = "TRACKS.MUNIC.MDI_OBD_SPEED (km/h)"
 MERGED_COL_DEFAULT = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
 
-def merge_speed_columns(
-    input_csv_path: Path,
-    output_csv_path: Optional[Path] = None,
-    gps_col: str = GPS_COL_DEFAULT,
-    obd_col: str = OBD_COL_DEFAULT,
-    merged_col: str = MERGED_COL_DEFAULT,
-    drop_original: bool = True,
-) -> Path:
-    """
-    Read a CSV, merge complementary GPS/OBD speed columns into a new column, and save.
+def merge_speed_columns(input_csv_path: Path,output_csv_path: Optional[Path] = None,gps_col: str = GPS_COL_DEFAULT,obd_col: str = OBD_COL_DEFAULT,merged_col: str = MERGED_COL_DEFAULT,drop_original: bool = True,) -> Path:
 
-    Merge rule: use GPS when available; otherwise use OBD.
-    By default the original source columns are removed (set drop_original=False to keep).
-    """
     if output_csv_path is None:
-        output_csv_path = input_csv_path.with_name(
-            f"{input_csv_path.stem}_merged{input_csv_path.suffix}"
-        )
+        output_csv_path = input_csv_path.with_name(f"{input_csv_path.stem}_merged{input_csv_path.suffix}")
 
     df = pd.read_csv(input_csv_path, low_memory=False)
 
@@ -53,53 +39,17 @@ def merge_speed_columns(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Merge complementary speed columns 'TRACKS.MUNIC.GPS_SPEED (km/h)' and "
-            "'TRACKS.MUNIC.MDI_OBD_SPEED (km/h)' into a new column and write to CSV"
         )
     )
-    parser.add_argument(
-        "input_csv",
-        type=Path,
-        nargs="?",
-        default=Path("fuel_data"),
-        help="Input CSV file path (optional)",
-    )
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("fuel_data_speed_merged"),
-        help="Output CSV path (optional, defaults to add _merged to input name)",
-    )
-    parser.add_argument(
-        "--gps-col",
-        type=str,
-        default="TRACKS.MUNIC.GPS_SPEED (km/h)",
-        help=f"GPS speed column name (default: {GPS_COL_DEFAULT})",
-    )
-    parser.add_argument(
-        "--obd-col",
-        type=str,
-        default="TRACKS.MUNIC.MDI_OBD_SPEED (km/h)",
-        help=f"OBD speed column name (default: {OBD_COL_DEFAULT})",
-    )
-    parser.add_argument(
-        "--merged-col",
-        type=str,
-        default="TRACKS.MUNIC.SPEED_MERGED (km/h)",
-        help=f"New merged column name (default: {MERGED_COL_DEFAULT})",
-    )
+    parser.add_argument("input_csv",type=Path,nargs="?",default=Path("fuel_data"),help="Input CSV file path (optional)")
+    parser.add_argument("--output",type=Path,default=Path("fuel_data_speed_merged"),help="Output CSV path (optional, defaults to add _merged to input name)")
+    parser.add_argument("--gps-col",type=str,default="TRACKS.MUNIC.GPS_SPEED (km/h)", help=f"GPS speed column name (default: {GPS_COL_DEFAULT})")
+    parser.add_argument("--obd-col",type=str,default="TRACKS.MUNIC.MDI_OBD_SPEED (km/h)",help=f"OBD speed column name (default: {OBD_COL_DEFAULT})")
+    parser.add_argument("--merged-col",type=str,default="TRACKS.MUNIC.SPEED_MERGED (km/h)",help=f"New merged column name (default: {MERGED_COL_DEFAULT})")
 
     group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--keep-originals",
-        action="store_true",
-        help="Keep the original GPS/OBD speed columns (default is to drop them).",
-    )
-    group.add_argument(
-        "--drop-originals",
-        action="store_true",
-        help="Explicitly drop the original GPS/OBD speed columns.",
-    )
+    group.add_argument("--keep-originals",action="store_true",help="Keep the original GPS/OBD speed columns (default is to drop them).")
+    group.add_argument("--drop-originals",action="store_true",help="Explicitly drop the original GPS/OBD speed columns.")
 
     args = parser.parse_args()
 
@@ -117,13 +67,7 @@ def main() -> None:
         for csv_path in csv_files:
             target_path = output_base / f"{csv_path.stem}_merged{csv_path.suffix}"
             try:
-                out = merge_speed_columns(
-                    input_csv_path=csv_path,
-                    output_csv_path=target_path,
-                    gps_col=args.gps_col,
-                    obd_col=args.obd_col,
-                    merged_col=args.merged_col,
-                )
+                out = merge_speed_columns(input_csv_path=csv_path,output_csv_path=target_path,gps_col=args.gps_col,obd_col=args.obd_col,merged_col=args.merged_col,)
                 print(f"Written: {out}")
             except KeyError as e:
                 print(f"Skipped {csv_path.name}: {e}")
@@ -139,14 +83,7 @@ def main() -> None:
         target_output.mkdir(parents=True, exist_ok=True)
         target_output = target_output / f"{input_path.stem}_merged{input_path.suffix}"
 
-    out = merge_speed_columns(
-        input_csv_path=input_path,
-        output_csv_path=target_output,
-        gps_col=args.gps_col,
-        obd_col=args.obd_col,
-        merged_col=args.merged_col,
-        drop_original=drop_original,
-    )
+    out = merge_speed_columns(input_csv_path=input_path,output_csv_path=target_output,gps_col=args.gps_col,obd_col=args.obd_col,merged_col=args.merged_col,drop_original=drop_original,)
     print(f"Written: {out}")
 
 

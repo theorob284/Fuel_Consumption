@@ -61,8 +61,8 @@ def main():
     plt.show()
 
     # --- Summary ---
-    print(f"✅ Linear Regression R²: {lin_r2:.3f}")
-    print(f"✅ Polynomial Regression (degree={POLY_DEGREE}) R²: {poly_r2:.3f}")
+    print(f"Linear Regression R²: {lin_r2:.3f}")
+    print(f"Polynomial Regression (degree={POLY_DEGREE}) R²: {poly_r2:.3f}")
     print("Use the plotted curve to identify efficient speed ranges.")
 
 

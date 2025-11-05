@@ -18,16 +18,16 @@ MODEL_PATH    = Path("models/fuel_rate_rf_all.pkl")
 def merge_all():
     """Merge GPS + OBD speed into one column for every CSV in RAW_DIR."""
     if not RAW_DIR.exists():
-        print(f"❌ Folder not found: {RAW_DIR.resolve()}")
+        print(f"Folder not found: {RAW_DIR.resolve()}")
         return
 
     MERGED_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted(RAW_DIR.glob("*.csv"))
     if not files:
-        print(f"⚠️ No CSV files in {RAW_DIR}")
+        print(f"No CSV files in {RAW_DIR}")
         return
 
-    print(f"📦 Merging speed columns for {len(files)} file(s) → {MERGED_DIR}")
+    print(f"Merging speed columns for {len(files)} file(s) → {MERGED_DIR}")
     for src in files:
         dst = MERGED_DIR / f"{src.stem}_merged.csv"
         try:
@@ -39,37 +39,30 @@ def merge_all():
                 merged_col=merge_speed.MERGED_COL_DEFAULT,
                 drop_original=True,
             )
-            print(f"  ✅ {src.name} → {dst.name}")
+            print(f"{src.name} → {dst.name}")
         except Exception as e:
-            print(f"  ❌ {src.name}: {e}")
-    print("✔️ Merge complete.\n")
+            print(f"{src.name}: {e}")
+    print("Merge complete.\n")
 
 
 def compute_fuelrate_all():
-    """
-    Compute fuel rate (ml/s) for every merged CSV in MERGED_DIR.
-    fuel_rate_calculator already checks the two required columns:
-      - TRACKS.MUNIC.MDI_OBD_FUEL (ml)
-      - TRACKS.MUNIC.SPEED_MERGED (km/h)
-    Outputs *_fuelrate.csv to FUELRATE_DIR.
-    """
     MERGED_DIR.mkdir(parents=True, exist_ok=True)
     FUELRATE_DIR.mkdir(parents=True, exist_ok=True)
 
-    print(f"🛠️  Computing fuel rate for files in {MERGED_DIR} → {FUELRATE_DIR}")
+    print(f"Computing fuel rate for files in {MERGED_DIR} → {FUELRATE_DIR}")
     fuel_rate_calculator.batch_process_all(input_dir=MERGED_DIR, output_dir=FUELRATE_DIR)
-    print("✔️ Fuel-rate computation complete.\n")
+    print("Fuel-rate computation complete.\n")
 
 
 def train_rf_all():
-    """Combine all *_fuelrate.csv and train one Random Forest model."""
+
     files = sorted(FUELRATE_DIR.glob("*_fuelrate.csv"))
     if not files:
-        print(f"⚠️ No '*_fuelrate.csv' files in {FUELRATE_DIR}. Run option 2 first.")
+        print(f"No '*_fuelrate.csv' files in {FUELRATE_DIR}. Run option 2 first.")
         return
 
     combined_csv = FUELRATE_DIR / "_combined_all_fuelrate.csv"
-    print(f"🧠 Preparing training data from {len(files)} file(s)...")
+    print(f"Preparing training data from {len(files)} file(s)...")
 
     frames = []
     for f in files:
@@ -78,10 +71,10 @@ def train_rf_all():
             df["trip_id"] = f.stem  # keep source info
             frames.append(df)
         except Exception as e:
-            print(f"  ❌ Skipping {f.name}: {e}")
+            print(f" kipping {f.name}: {e}")
 
     if not frames:
-        print("❌ No usable data to train on.")
+        print("No usable data to train on.")
         return
 
     combined = pd.concat(frames, ignore_index=True)
@@ -90,7 +83,7 @@ def train_rf_all():
     print(f"Rows in combined dataset: {len(combined):,}")
     print(f"Columns: {list(combined.columns)}")
     combined.to_csv(combined_csv, index=False)
-    print(f"  📝 Combined dataset written: {combined_csv}")
+    print(f"Combined dataset written: {combined_csv}")
 
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     summary = fuel_rate_rf_model.train_rf(
@@ -101,7 +94,7 @@ def train_rf_all():
         random_state=42,
     )
 
-    print("\n=== Random Forest Summary ===")
+    print("\n=== Random Forest Summary ===\n")
     print(f"Train rows: {summary['n_train']} | Test rows: {summary['n_test']}")
     print(f"Features : {summary['features']}")
     print(f"R²       : {summary['r2']:.3f}")
