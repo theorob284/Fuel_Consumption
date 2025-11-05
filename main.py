@@ -46,7 +46,7 @@ def main():
 
         print("\n All files processed!")
     elif User_program_run == 2:
-        input_file = Path("fuel_data_speed_merged/863609060548678_merged.csv")
+        input_file = Path("fuel_data_speed_merged/*.csv")
         output_file = input_file.with_name("863609060548678_fuelrate.csv")
 
         fuel_rate_calculator.add_fuel_rate(input_file, output_file)
