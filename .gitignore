@@ -107,7 +107,7 @@ dmypy.json
 
 # Output directories
 
-models/
+models/*
 fuel_data_speed_merged/
 output/
 results/
