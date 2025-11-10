@@ -88,14 +88,14 @@ def add_fuel_rate_for_file(input_csv: Path, output_csv: Path) -> bool:
     # ensure the two required columns exist
     required = {FUEL_CUM_COL, SPEED_COL}
     if not required.issubset(df.columns):
-        print(f"⏭️  Skipping {input_csv.name} — missing one of {required}.")
+        print(f"Skipping {input_csv.name} — missing one of {required}.")
         return False
 
     # Choose time column
     try:
         time_col = _pick_time_column(df)
     except KeyError as e:
-        print(f"⏭️  Skipping {input_csv.name} — {e}")
+        print(f"Skipping {input_csv.name} — {e}")
         return False
 
     raw_rate = _compute_adjacent_minute_rates(df, time_col)
