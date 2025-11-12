@@ -7,6 +7,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
+from sklearn.model_selection import GroupShuffleSplit
 import time
 
 # column names
@@ -25,43 +26,49 @@ def _find_rpm_column(df: pd.DataFrame):
             return c
     return None
 
-def _build_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
-    # Keep only needed columns plus optional time/RPM
-    keep = [SPEED_COL, TARGET_COL] + [c for c in df.columns if c.lower() == "time" or c in RPM_COL_CANDIDATES]
-    df = df[keep].copy().dropna(subset=[SPEED_COL, TARGET_COL])
+def _build_features(df: pd.DataFrame):
+    """Builds predictive features for fuel rate modelling."""
 
-    # Sort by time if available
-    time_col = next((c for c in df.columns if c.lower() == "time"), None)
-    if time_col:
-        df[time_col] = pd.to_datetime(df[time_col], errors="coerce")
-        df = df.sort_values(time_col)
-        dt = df[time_col].diff().dt.total_seconds().clip(lower=1)
-    else:
-        dt = pd.Series(1.0, index=df.index)
+    df = df.copy()
 
-    # Numeric
-    df[SPEED_COL]  = pd.to_numeric(df[SPEED_COL], errors="coerce")
+    # Core numeric columns
+    df[SPEED_COL] = pd.to_numeric(df[SPEED_COL], errors="coerce")
     df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors="coerce")
 
-    # Engineered features
-    df["acceleration"] = df[SPEED_COL].diff() / dt
-    df["speed_roll"] = df[SPEED_COL].rolling(ROLL_WIN, min_periods=1, center=True).mean()
-    df["acc_roll"] = df["acceleration"].rolling(ROLL_WIN, min_periods=1, center=True).mean()
+    # Sort by time to preserve sequence
+    df = df.sort_values("time").reset_index(drop=True)
+
+    # Compute acceleration (delta speed / delta time)
+    df["time"] = pd.to_datetime(df["time"], errors="coerce")
+    df["dt"] = df["time"].diff().dt.total_seconds().fillna(0).replace(0, np.nan)
+    df["acceleration"] = df[SPEED_COL].diff() / df["dt"]
+    df["acceleration"].fillna(0, inplace=True)
+
+    # Rolling statistics for smoothing (3-sec window)
+    df["speed_roll"] = df[SPEED_COL].rolling(window=3, min_periods=1).mean()
+    df["acc_roll"] = df["acceleration"].rolling(window=3, min_periods=1).mean()
+
+    # NEW — engineered features
     df["speed_sq"] = df[SPEED_COL] ** 2
+    df["accel_sq"] = df["acceleration"] ** 2
+    df["speed_change"] = df[SPEED_COL].diff().fillna(0)
+    df["speed_x_acc"] = df[SPEED_COL] * df["acceleration"]
 
-    rpm_col = _find_rpm_column(df)
-    feats = [SPEED_COL, "acceleration", "speed_roll", "acc_roll", "speed_sq"]
+    # Drop NaN target rows
+    df = df.dropna(subset=[TARGET_COL])
 
-    if rpm_col:
-        df[rpm_col] = pd.to_numeric(df[rpm_col], errors="coerce")
-        df["rpm"] = df[rpm_col]
-        df["rpm_speed_ratio"] = df["rpm"] / df[SPEED_COL].replace(0, np.nan)
-        df["rpm_speed_ratio"].replace([np.inf, -np.inf], np.nan, inplace=True)
-        feats += ["rpm", "rpm_speed_ratio"]
+    feature_cols = [
+        SPEED_COL,
+        "acceleration",
+        "speed_roll",
+        "acc_roll",
+        "speed_sq",
+        "accel_sq",
+        "speed_change",
+        "speed_x_acc",
+    ]
 
-    df = df.dropna(subset=feats + [TARGET_COL])
-
-    return df, feats
+    return df, feature_cols
 
 def _temporal_split(df: pd.DataFrame, features: list[str], test_size=0.2):
     n = len(df)
@@ -88,10 +95,10 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
     # training values
     rf = RandomForestRegressor(
         n_estimators=n_estimators,
-        max_depth=16,
+        max_depth=None,
         min_samples_leaf=5,
         max_features="sqrt",
-        n_jobs=1,  # safer on laptops; switch to -1 if you have plenty of RAM
+        n_jobs=-1,  # safer on laptops; switch to -1 if you have plenty of RAM
         random_state=random_state,
         verbose=1,
     )
@@ -110,8 +117,10 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
     importances = pd.Series(rf.feature_importances_, index=feature_cols).sort_values(ascending=False)
 
     # Save the model
-    model_out = Path(model_out)
-    model_out.parent.mkdir(parents=True, exist_ok=True)
+    # Always save into models/ directory
+    models_dir = Path("models")
+    models_dir.mkdir(parents=True, exist_ok=True)
+    model_out = models_dir / Path(model_out).name
     joblib.dump({"model": rf, "features": feature_cols}, model_out)
     print(f"Model saved to: {model_out}")
 

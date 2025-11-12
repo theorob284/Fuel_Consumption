@@ -104,13 +104,13 @@ def _combine_processed(sample_frac: float | None = 0.02) -> Path:
 # Train Random Forest
 def train_rf_all():
     print("Preparing training data from ALL processed files...")
-    combined_csv = _combine_processed(sample_frac=0.20)  # tweak fraction if you like
+    combined_csv = _combine_processed(sample_frac=0.40)  # tweak fraction if you like
 
     summary = fuel_rate_rf_model.train_rf(
         input_csv=combined_csv,
         model_out= "fuel_rate_rf_all.pkl",
         plots=False,            
-        n_estimators=100,
+        n_estimators=200,
         random_state=42,
     )
 

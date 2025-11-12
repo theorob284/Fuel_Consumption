@@ -38,8 +38,7 @@ def merge_speed_columns(input_csv_path: Path,output_csv_path: Optional[Path] = N
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-        )
+        description=()
     )
     parser.add_argument("input_csv",type=Path,nargs="?",default=Path("fuel_data"),help="Input CSV file path (optional)")
     parser.add_argument("--output",type=Path,default=Path("fuel_data_speed_merged"),help="Output CSV path (optional, defaults to add _merged to input name)")

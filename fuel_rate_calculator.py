@@ -34,86 +34,155 @@ def _pick_time_column(df: pd.DataFrame) -> str:
     )
 
 
-def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str) -> pd.Series:
-    # Prepare time & fuel poin
+def _compute_adjacent_minute_rates(
+    df: pd.DataFrame,
+    time_col: str,
+    weight_power: float = 1.0,  # 1 → proportional to speed; try 2 to stress aero drag
+) -> pd.Series:
+    """
+    Compute per-row fuel rate by redistributing each valid ~60s fuel segment
+    to the rows inside that segment proportionally to (speed**weight_power * dt).
+
+    Returns a Series aligned to df index with ml/s, NaN elsewhere.
+    """
+    # Parse time / cumulative fuel / speed
     t = pd.to_datetime(df[time_col], errors="coerce")
     f = pd.to_numeric(df[FUEL_CUM_COL], errors="coerce")
+    s = pd.to_numeric(df[SPEED_COL], errors="coerce").clip(lower=0).fillna(0)
 
-    fuel_pts = pd.DataFrame({"_t": t, "_f": f}).dropna().reset_index()  # keep original row index
+    fuel_pts = (
+        pd.DataFrame({"_idx": df.index, "_t": t, "_f": f})
+        .dropna(subset=["_t", "_f"])
+        .reset_index(drop=True)
+    )
     if len(fuel_pts) < 2:
         return pd.Series(index=df.index, dtype="float64")
 
-    # Consecutive diffs
-    fuel_pts["time_diff_s"]  = fuel_pts["_t"].diff().dt.total_seconds()
-    fuel_pts["fuel_diff_ml"] = fuel_pts["_f"].diff()
-    fuel_pts["segment_rate"] = fuel_pts["fuel_diff_ml"] / fuel_pts["time_diff_s"]
+    # Time / fuel diffs between consecutive valid points
+    fuel_pts["dt"] = fuel_pts["_t"].diff().dt.total_seconds()
+    fuel_pts["dfuel"] = fuel_pts["_f"].diff()
+    fuel_pts["r_seg"] = fuel_pts["dfuel"] / fuel_pts["dt"]  # ml/s
 
-    # Keep only directly-adjacent ~1-minute segments
-    valid = fuel_pts["time_diff_s"].between(MIN_INTERVAL, MAX_INTERVAL, inclusive="both")
-    valid_segments = fuel_pts.loc[valid, ["index", "_t", "segment_rate"]].reset_index(drop=True)
+    # Keep only ~1 minute segments
+    valid = fuel_pts["dt"].between(MIN_INTERVAL, MAX_INTERVAL, inclusive="both")
+    valid_idx = valid[valid].index
 
-    # Assign piecewise-constant rate to rows between prev_t and cur_t
-    rate = pd.Series(index=df.index, dtype="float64")
-    for i in range(len(valid_segments)):
-        cur_pos = valid_segments.loc[i, "index"]
-        pos_in_fuel_pts = fuel_pts.index[fuel_pts["index"] == cur_pos][0]
-        if pos_in_fuel_pts == 0:
+    out = pd.Series(index=df.index, dtype="float64")
+
+    for i in valid_idx:
+        # segment is (i-1) → i
+        if i == 0:
             continue
-        prev_t = fuel_pts.loc[pos_in_fuel_pts - 1, "_t"]
-        cur_t  = valid_segments.loc[i, "_t"]
-        seg_rate = valid_segments.loc[i, "segment_rate"]
+        prev_t = fuel_pts.loc[i - 1, "_t"]
+        cur_t  = fuel_pts.loc[i, "_t"]
+        seg_dt = float(fuel_pts.loc[i, "dt"])          # seconds
+        seg_r  = float(fuel_pts.loc[i, "r_seg"])       # ml/s
+        if not np.isfinite(seg_dt) or seg_dt <= 0 or not np.isfinite(seg_r):
+            continue
 
+        # rows inside this segment [prev_t, cur_t)
         mask = (t >= prev_t) & (t < cur_t)
-        rate.loc[mask] = seg_rate
+        if not mask.any():
+            continue
+        idx = df.index[mask]
 
-    # Clean impossible values
-    rate = pd.to_numeric(rate, errors="coerce")
-    rate[(rate < 0) | (rate > ABS_PHYS_MAX)] = np.nan
-    return rate
+        # per-row durations dt_i (last row reaches the segment end)
+        times = t.loc[idx]
+        dt = (times.shift(-1) - times).dt.total_seconds().fillna(0)
+        # extend the last row to segment end
+        last_extra = (cur_t - times.iloc[-1]).total_seconds()
+        dt.iloc[-1] = max(0.0, last_extra)
 
+        total_dt = float(dt.sum())
+        if total_dt <= 0:
+            out.loc[idx] = seg_r  # fallback: constant within segment
+            continue
+
+        # weights: speed**p * dt
+        weights = (s.loc[idx].to_numpy() ** weight_power) * dt.to_numpy()
+        sum_w = float(np.sum(weights))
+        if sum_w <= 0:
+            out.loc[idx] = seg_r
+            continue
+
+        # total fuel for the segment and per-row instantaneous rate
+        F = seg_r * seg_dt  # ml
+        with np.errstate(divide='ignore', invalid='ignore'):
+            ml_per_s = (F * (weights / sum_w)) / dt.to_numpy()
+
+
+        # assign
+        out.loc[idx] = ml_per_s
+
+    # sanity check / clean impossible values
+    out = pd.to_numeric(out, errors="coerce")
+    out[(out < 0) | (out > ABS_PHYS_MAX)] = np.nan
+    return out
 
 def _cap_outliers(rate: pd.Series) -> pd.Series:
-    finite = rate.replace([np.inf, -np.inf], np.nan).dropna()
+    """
+    Cap absurd values: clip negatives to 0 and clip the top tail to a
+    percentile-based ceiling (but never above ABS_MAX_CAP).
+    """
+    r = pd.to_numeric(rate, errors="coerce")
+    r[r < 0] = np.nan
+    finite = r.replace([np.inf, -np.inf], np.nan).dropna()
     if finite.empty:
-        return rate
-    cap_value = min(float(finite.quantile(PERCENTILE_FOR_CAP)), ABS_MAX_CAP)
-    capped = rate.copy()
-    capped[capped > cap_value] = cap_value
-    return capped
+        return r
+
+    p99 = float(finite.quantile(PERCENTILE_FOR_CAP))
+    # allow a bit above p99 but never past a hard absolute cap
+    soft_cap = p99 * 1.5
+    hard_cap = min(soft_cap, ABS_MAX_CAP)
+    return r.clip(lower=0, upper=hard_cap)
 
 
-def add_fuel_rate_for_file(input_csv: Path, output_csv: Path) -> bool:
+def add_fuel_rate_for_file(
+    input_csv: Path,
+    output_csv: Path,
+    *,
+    weight_power: float = 1.0,   # 1: proportional to speed; try 2 to stress aero drag
+) -> bool:
+    """
+    Read one merged-speed CSV, compute per-row fuel rate (ml/s) by redistributing each
+    valid ~60s fuel segment across the rows inside that segment. Save to output_csv.
+
+    Returns True if the file was processed and written, False if skipped.
+    """
     df = pd.read_csv(input_csv, low_memory=False)
 
-    # ensure the two required columns exist
+    # Ensure the two required columns exist
     required = {FUEL_CUM_COL, SPEED_COL}
     if not required.issubset(df.columns):
-        print(f"Skipping {input_csv.name} — missing one of {required}.")
+        print(f"Skipping {input_csv.name} – missing one of {required}.")
         return False
 
-    # Choose time column
+    # Choose a time column
     try:
         time_col = _pick_time_column(df)
     except KeyError as e:
-        print(f"Skipping {input_csv.name} — {e}")
+        print(f"Skipping {input_csv.name} – {e}")
         return False
 
-    raw_rate = _compute_adjacent_minute_rates(df, time_col)
+    # Compute rate with speed-weighted redistribution
+    raw_rate = _compute_adjacent_minute_rates(
+        df, time_col=time_col, weight_power=weight_power
+    )
+
+    # Cap outliers and drop NaNs
     cleaned_rate = _cap_outliers(raw_rate)
 
     df[RATE_COL] = cleaned_rate
     df = df[df[RATE_COL].notna()].copy()
 
-    # Save
+    # Write out
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
 
+    # simple progress signal
     finite = df[RATE_COL].replace([np.inf, -np.inf], np.nan).dropna()
-    p99 = float(finite.quantile(0.99)) if not finite.empty else float("nan")
-    print(
-        f"{input_csv.name} → {output_csv.name} | rows kept: {len(df)} | "
-        f"mean: {finite.mean():.2f} ml/s | p99: {p99:.2f}"
-    )
+    p99 = float(finite.quantile(PERCENTILE_FOR_CAP)) if not finite.empty else float("nan")
+    print(f"{input_csv.name} → {output_csv.name} | rows kept: {len(df):,} | p99≈{p99:.2f} ml/s")
     return True
 
 
@@ -138,10 +207,7 @@ def batch_process_all(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR
             skipped += 1
             print(f"Error on {f.name}: {e}")
 
-    print(
-        f"\nDone. Processed: {processed} | Skipped: {skipped} | "
-        f"Input: {input_dir} | Output: {output_dir}"
-    )
+    print(f"\nDone. Processed: {processed} | Skipped: {skipped} | "f"Input: {input_dir} | Output: {output_dir}")
 
 if __name__ == "__main__":
     batch_process_all()
