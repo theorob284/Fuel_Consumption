@@ -7,7 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-from sklearn.model_selection import GroupShuffleSplit
 import time
 
 # column names
@@ -15,20 +14,8 @@ SPEED_COL  = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
 TARGET_COL = "TRACKS.MUNIC.FUEL_RATE (ml/s)"
 RPM_COL_CANDIDATES = ["TRACKS.MUNIC.MDI_OBD_RPM (rpm)", "RPM", "TRACKS.MUNIC.RPM", "MDI_RPM"]
 
-# defaults
-ROLL_WIN = 5
-N_ESTIMATORS = 100
-RANDOM_STATE = 42
-
-def _find_rpm_column(df: pd.DataFrame):
-    for c in RPM_COL_CANDIDATES:
-        if c in df.columns:
-            return c
-    return None
-
 def _build_features(df: pd.DataFrame):
-    """Builds predictive features for fuel rate modelling."""
-
+    #Builds predictive features for fuel rate modelling
     df = df.copy()
 
     # Core numeric columns
@@ -56,18 +43,7 @@ def _build_features(df: pd.DataFrame):
 
     # Drop NaN target rows
     df = df.dropna(subset=[TARGET_COL])
-
-    feature_cols = [
-        SPEED_COL,
-        "acceleration",
-        "speed_roll",
-        "acc_roll",
-        "speed_sq",
-        "accel_sq",
-        "speed_change",
-        "speed_x_acc",
-    ]
-
+    feature_cols = [SPEED_COL,"acceleration","speed_roll","acc_roll","speed_sq","accel_sq","speed_change","speed_x_acc",]
     return df, feature_cols
 
 def _temporal_split(df: pd.DataFrame, features: list[str], test_size=0.2):
@@ -79,13 +55,11 @@ def _temporal_split(df: pd.DataFrame, features: list[str], test_size=0.2):
     y_test  = df.iloc[cut:][TARGET_COL]
     return X_train, X_test, y_train, y_test
 
-def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: int = N_ESTIMATORS,random_state: int = RANDOM_STATE ):
-
+def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: int = 100,random_state: int = 42 ):
     df = pd.read_csv(input_csv, low_memory=False)
     df, feature_cols = _build_features(df)
 
     X_train, X_test, y_train, y_test = _temporal_split(df, feature_cols, test_size=0.2)
-
     # downcast to reduce RAM & speed
     X_train = X_train.astype("float32")
     X_test  = X_test.astype("float32")
@@ -96,9 +70,9 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
     rf = RandomForestRegressor(
         n_estimators=n_estimators,
         max_depth=None,
-        min_samples_leaf=5,
+        min_samples_leaf=3,
         max_features="sqrt",
-        n_jobs=-1,  # safer on laptops; switch to -1 if you have plenty of RAM
+        n_jobs=-1,  # switch to -1 if you have plenty of RAM
         random_state=random_state,
         verbose=1,
     )
@@ -113,10 +87,8 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
     r2   = r2_score(y_test, y_pred)
     mae  = mean_absolute_error(y_test, y_pred)
     rmse = math.sqrt(mean_squared_error(y_test, y_pred))
-
     importances = pd.Series(rf.feature_importances_, index=feature_cols).sort_values(ascending=False)
 
-    # Save the model
     # Always save into models/ directory
     models_dir = Path("models")
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -135,32 +107,26 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
         return cur.reindex(columns=feature_cols, fill_value=0.0).astype("float32")
 
     # overlay graph plot
-    speed_range = np.arange(0, 161).astype(float)  # 0 -> 160 inclusive
+    speed_range = np.arange(0, 151).astype(float)  # 0 -> 150 inclusive
     pred_curve = rf.predict(_curve_features(speed_range))
 
-    # real data: keep within 0..160, bin by 1 km/h and smooth lightly
+    # real data: keep within 0..150, bin by 1 km/h and smooth lightly
     plot_df = df[[SPEED_COL, TARGET_COL]].dropna().copy()
     plot_df["speed_bin"] = plot_df[SPEED_COL].round().astype(int)
-    plot_df = plot_df[(plot_df["speed_bin"] >= 0) & (plot_df["speed_bin"] <= 160)]
+    plot_df = plot_df[(plot_df["speed_bin"] >= 0) & (plot_df["speed_bin"] <= 150)] # ------------------ CHANGE HERE TO LIMIT SPEED USED (MAKE SURE TO LIMITE PLOTTED AS WELL (LINE 150)
 
-    real_avg = (plot_df.groupby("speed_bin")[TARGET_COL].mean().reset_index().sort_values("speed_bin")
-    )
+    real_avg = (plot_df.groupby("speed_bin")[TARGET_COL].mean().reset_index().sort_values("speed_bin"))
     # 3-point centered rolling mean for a clean line
     real_avg["smooth"] = real_avg[TARGET_COL].rolling(3, center=True, min_periods=1).mean()
-
     plt.figure(figsize=(12, 6))
-    # raw scatter (very transparent so it doesn't dominate)
+    # raw scatter, smooth average + model pred curve
     plt.scatter(plot_df[SPEED_COL], plot_df[TARGET_COL], s=5, alpha=0.02, color="steelblue", label="Raw data")
-    # smoothed real average
-    plt.plot(real_avg["speed_bin"], real_avg["smooth"],color="tab:blue", linewidth=2, label="Real average (smoothed)")
-    # model prediction curve
+    plt.plot(real_avg["speed_bin"], real_avg["smooth"],color="tab:red", linewidth=2, label="Real average (smoothed)")
     plt.plot(speed_range, pred_curve,color="orange", linewidth=2, label="Model prediction")
 
     # labels / limits / legend
-    plt.xlabel("Speed (km/h)")
-    plt.ylabel("Fuel Rate (ml/s)")
-    plt.title("Fuel vs Speed — Real Data vs Model")
-    plt.xlim(0, 160)
+    plt.xlabel("Speed (km/h)"), plt.ylabel("Fuel Rate (ml/s)"), plt.title("Fuel vs Speed — Real Data vs Model")
+    plt.xlim(0, 150) # ---------------- CHENGE HERE TO LIMITE SPEED SHOWN ON GRAPH
     plt.grid(True, alpha=0.25)
     plt.legend(loc="upper left")
 

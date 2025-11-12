@@ -4,7 +4,6 @@ from typing import Optional
 
 import pandas as pd
 
-
 GPS_COL_DEFAULT = "TRACKS.MUNIC.GPS_SPEED (km/h)"
 OBD_COL_DEFAULT = "TRACKS.MUNIC.MDI_OBD_SPEED (km/h)"
 MERGED_COL_DEFAULT = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
@@ -13,14 +12,11 @@ def merge_speed_columns(input_csv_path: Path,output_csv_path: Optional[Path] = N
 
     if output_csv_path is None:
         output_csv_path = input_csv_path.with_name(f"{input_csv_path.stem}_merged{input_csv_path.suffix}")
-
     df = pd.read_csv(input_csv_path, low_memory=False)
 
     missing = [c for c in [gps_col, obd_col] if c not in df.columns]
     if missing:
-        raise KeyError(
-            f"Missing required columns: {missing}. Expected '{gps_col}' and '{obd_col}'."
-        )
+        raise KeyError(f"Missing required columns: {missing}. Expected '{gps_col}' and '{obd_col}'.")
 
     gps_series = pd.to_numeric(df[gps_col], errors="coerce")
     obd_series = pd.to_numeric(df[obd_col], errors="coerce")
@@ -84,9 +80,3 @@ def main() -> None:
 
     out = merge_speed_columns(input_csv_path=input_path,output_csv_path=target_output,gps_col=args.gps_col,obd_col=args.obd_col,merged_col=args.merged_col,drop_original=drop_original,)
     print(f"Written: {out}")
-
-
-if __name__ == "__main__":
-    main()
-
-

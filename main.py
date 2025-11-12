@@ -1,7 +1,5 @@
 # main.py
 from __future__ import annotations
-
-import gc
 import os
 import shutil
 import sys
@@ -13,8 +11,6 @@ import merge_speed
 import fuel_rate_calculator
 import fuel_rate_rf_model
 import baseline_algorithm
-
-
 
 # Paths 
 RAW_DIR           = Path("fuel_data")               # your original raw CSVs (per trip)
@@ -32,7 +28,6 @@ FUEL_RATE_COL     = "TRACKS.MUNIC.FUEL_RATE (ml/s)"
 
 def merge_all():
     # This merges GPS and OBD speed columns for ALL CSVs in RAW_DIR → SPEED_MERGED_DIR.
-    
     RAW_DIR.mkdir(parents=True, exist_ok=True)
     SPEED_MERGED_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -62,13 +57,12 @@ def merge_all():
 
 def compute_fuelrate_all():
     # Compute fuel rate for ALL merged files in SPEED_MERGED_DIR → FUELRATE_DIR.
-
     print("...Computing fuel rate for all merged files…")
     fuel_rate_calculator.batch_process_all(
         input_dir=SPEED_MERGED_DIR,
         output_dir=FUELRATE_DIR
-    )
 
+    )
     os.chdir(".")
     if os.path.exists(SPEED_MERGED_DIR):
         shutil.rmtree(SPEED_MERGED_DIR, ignore_errors=True)
@@ -104,22 +98,19 @@ def _combine_processed(sample_frac: float | None = 0.02) -> Path:
 # Train Random Forest
 def train_rf_all():
     print("Preparing training data from ALL processed files...")
-    combined_csv = _combine_processed(sample_frac=0.40)  # tweak fraction if you like
+    combined_csv = _combine_processed(sample_frac=0.60)  # ---------- THIS TELLS YOU HOW MUCH DATA IS USED
 
-    summary = fuel_rate_rf_model.train_rf(
+    summary = fuel_rate_rf_model.train_rf( # ------------ THIS IS WHERE YOU CAN CHANGE THE NO. OF TREES AND
         input_csv=combined_csv,
         model_out= "fuel_rate_rf_all.pkl",
         plots=False,            
-        n_estimators=200,
+        n_estimators=400,
         random_state=42,
     )
-
     print("\n=== Random Forest Summary ===")
     print(f"Train rows: {summary['n_train']} | Test rows: {summary['n_test']}\nFeatures : {summary['features']}\nR²       : {summary['r2']:.3f}\nMAE      : {summary['mae']:.3f} ml/s\nRMSE     : {summary['rmse']:.3f} ml/s")
-    print("Top importances:\n", summary["importances"].head(10), f"Model saved → {summary['model_path']}\nOverlay   → {summary['overlay_path']}")
 
 #Baselines (Linear/Poly/SVR)
-
 def run_baselines_all():
     #This runs the baseline algorithms
     print("Running baseline models (Linear / Polynomial / SVR)…")
@@ -131,9 +122,7 @@ def run_baselines_all():
         sample_frac=0.50, # use 10% for speed; increase if you want
         svr_sample=50_000,
         save_path=out_img,
-        show=True # set False to only save the figure
     )
-
     print("\n=== Baseline Model Metrics ===")
     for name, m in result["metrics"].items():
         print(f"{name:>22} | R²: {m['r2']:.3f}  MSE: {m['mse']:.3f}")
@@ -155,7 +144,6 @@ def main():
     else:
         print("Please enter 1, 2, 3, or 4.")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

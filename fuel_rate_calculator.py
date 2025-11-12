@@ -29,32 +29,15 @@ def _pick_time_column(df: pd.DataFrame) -> str:
     for c in TIME_COL_FALLBACKS:
         if c in df.columns:
             return c
-    raise KeyError(
-        f"No time-like column found. Expected '{TIME_COL_PRIMARY}' or one of {TIME_COL_FALLBACKS}."
-    )
+    raise KeyError(f"No time-like column found. Expected '{TIME_COL_PRIMARY}' or one of {TIME_COL_FALLBACKS}.")
 
-
-def _compute_adjacent_minute_rates(
-    df: pd.DataFrame,
-    time_col: str,
-    weight_power: float = 1.0,  # 1 → proportional to speed; try 2 to stress aero drag
-) -> pd.Series:
-    """
-    Compute per-row fuel rate by redistributing each valid ~60s fuel segment
-    to the rows inside that segment proportionally to (speed**weight_power * dt).
-
-    Returns a Series aligned to df index with ml/s, NaN elsewhere.
-    """
+def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power: float = 1.0,  ) -> pd.Series: # float 1 → proportional to speed; try 2 to stress aero drag 
     # Parse time / cumulative fuel / speed
     t = pd.to_datetime(df[time_col], errors="coerce")
     f = pd.to_numeric(df[FUEL_CUM_COL], errors="coerce")
     s = pd.to_numeric(df[SPEED_COL], errors="coerce").clip(lower=0).fillna(0)
 
-    fuel_pts = (
-        pd.DataFrame({"_idx": df.index, "_t": t, "_f": f})
-        .dropna(subset=["_t", "_f"])
-        .reset_index(drop=True)
-    )
+    fuel_pts = (pd.DataFrame({"_idx": df.index, "_t": t, "_f": f}).dropna(subset=["_t", "_f"]).reset_index(drop=True))
     if len(fuel_pts) < 2:
         return pd.Series(index=df.index, dtype="float64")
 
@@ -62,7 +45,6 @@ def _compute_adjacent_minute_rates(
     fuel_pts["dt"] = fuel_pts["_t"].diff().dt.total_seconds()
     fuel_pts["dfuel"] = fuel_pts["_f"].diff()
     fuel_pts["r_seg"] = fuel_pts["dfuel"] / fuel_pts["dt"]  # ml/s
-
     # Keep only ~1 minute segments
     valid = fuel_pts["dt"].between(MIN_INTERVAL, MAX_INTERVAL, inclusive="both")
     valid_idx = valid[valid].index
@@ -97,8 +79,7 @@ def _compute_adjacent_minute_rates(
         if total_dt <= 0:
             out.loc[idx] = seg_r  # fallback: constant within segment
             continue
-
-        # weights: speed**p * dt
+    
         weights = (s.loc[idx].to_numpy() ** weight_power) * dt.to_numpy()
         sum_w = float(np.sum(weights))
         if sum_w <= 0:
@@ -110,7 +91,6 @@ def _compute_adjacent_minute_rates(
         with np.errstate(divide='ignore', invalid='ignore'):
             ml_per_s = (F * (weights / sum_w)) / dt.to_numpy()
 
-
         # assign
         out.loc[idx] = ml_per_s
 
@@ -120,10 +100,6 @@ def _compute_adjacent_minute_rates(
     return out
 
 def _cap_outliers(rate: pd.Series) -> pd.Series:
-    """
-    Cap absurd values: clip negatives to 0 and clip the top tail to a
-    percentile-based ceiling (but never above ABS_MAX_CAP).
-    """
     r = pd.to_numeric(rate, errors="coerce")
     r[r < 0] = np.nan
     finite = r.replace([np.inf, -np.inf], np.nan).dropna()
@@ -137,20 +113,8 @@ def _cap_outliers(rate: pd.Series) -> pd.Series:
     return r.clip(lower=0, upper=hard_cap)
 
 
-def add_fuel_rate_for_file(
-    input_csv: Path,
-    output_csv: Path,
-    *,
-    weight_power: float = 1.0,   # 1: proportional to speed; try 2 to stress aero drag
-) -> bool:
-    """
-    Read one merged-speed CSV, compute per-row fuel rate (ml/s) by redistributing each
-    valid ~60s fuel segment across the rows inside that segment. Save to output_csv.
-
-    Returns True if the file was processed and written, False if skipped.
-    """
+def add_fuel_rate_for_file(input_csv: Path, output_csv: Path, *, weight_power: float = 1.0, ) -> bool:  # float 1: proportional to speed; try 2 to stress aero drag
     df = pd.read_csv(input_csv, low_memory=False)
-
     # Ensure the two required columns exist
     required = {FUEL_CUM_COL, SPEED_COL}
     if not required.issubset(df.columns):
@@ -165,17 +129,12 @@ def add_fuel_rate_for_file(
         return False
 
     # Compute rate with speed-weighted redistribution
-    raw_rate = _compute_adjacent_minute_rates(
-        df, time_col=time_col, weight_power=weight_power
-    )
-
+    raw_rate = _compute_adjacent_minute_rates(df, time_col=time_col, weight_power=weight_power)
     # Cap outliers and drop NaNs
     cleaned_rate = _cap_outliers(raw_rate)
-
     df[RATE_COL] = cleaned_rate
     df = df[df[RATE_COL].notna()].copy()
 
-    # Write out
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
 
@@ -208,6 +167,3 @@ def batch_process_all(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR
             print(f"Error on {f.name}: {e}")
 
     print(f"\nDone. Processed: {processed} | Skipped: {skipped} | "f"Input: {input_dir} | Output: {output_dir}")
-
-if __name__ == "__main__":
-    batch_process_all()

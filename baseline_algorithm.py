@@ -13,18 +13,8 @@ from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 from sklearn.svm import SVR
 from sklearn.metrics import r2_score, mean_squared_error
 
+def run_baselines(input_folder: str | Path = "fuel_data_with_fuelrate", sample_frac = 0.10, svr_sample = 50_000, save_path: Optional[Path] = None,) -> Dict[str, Any]:
 
-def run_baselines(
-    input_folder: str | Path = "fuel_data_with_fuelrate",
-    sample_frac: float = 0.10,                # fraction of rows to use (after cleaning)
-    svr_sample: int = 50_000,                 # rows for SVR (for speed)
-    save_path: Optional[Path] = None,         # e.g. Path("models/baseline_comparison.png")
-    show: bool = True,                        # show the plot window
-) -> Dict[str, Any]:
-    """
-    Train + compare simple baselines (Linear, Polynomial deg=3, SVR-RBF) on all CSVs in input_folder.
-    Returns a dict with fitted models and metrics. Optionally saves the figure.
-    """
     input_folder = str(input_folder)
     files = glob.glob(os.path.join(input_folder, "*.csv"))
     if not files:
@@ -51,7 +41,7 @@ def run_baselines(
 
     # Clean + light filter
     data = data.dropna(subset=[speed_col, fuel_col])
-    data = data[(data[speed_col] > 5) & (data[fuel_col] > 0) & (data[fuel_col] < 50)]
+    data = data[(data[speed_col] > 5) & (data[fuel_col] > 0) & (data[fuel_col] < 10)]
 
     # Downsample for speed
     if 0 < sample_frac < 1:
@@ -91,12 +81,7 @@ def run_baselines(
     # ---------- Metrics ----------
     def m(name, y_true, y_hat):
         return dict(name=name, r2=float(r2_score(y_true, y_hat)), mse=float(mean_squared_error(y_true, y_hat)))
-
-    metrics = {
-        "Linear": m("Linear", y, y_pred_lin),
-        "Polynomial (deg=3)": m("Polynomial (deg=3)", y, y_pred_poly),
-        "SVR (RBF, sample)": m("SVR (RBF, sample)", y_svr, y_pred_svr),
-    }
+    metrics = {"Linear": m("Linear", y, y_pred_lin), "Polynomial (deg=3)": m("Polynomial (deg=3)", y, y_pred_poly), "SVR (RBF, sample)": m("SVR (RBF, sample)", y_svr, y_pred_svr)}
 
     # ---------- Plot ----------
     speeds = np.linspace(data[speed_col].min(), data[speed_col].max(), 200).reshape(-1, 1)
@@ -105,45 +90,12 @@ def run_baselines(
 
     plt.plot(speeds, lin_reg.predict(speeds), color="red",   label="Linear")
     plt.plot(speeds, poly_reg.predict(poly.transform(speeds)), color="orange", label="Polynomial (degree 3)")
-    plt.plot(
-        speeds,
-        scaler_y.inverse_transform(svr.predict(scaler_X.transform(speeds)).reshape(-1, 1)),
-        color="green", label="SVR (RBF, sample)"
-    )
+    plt.plot(speeds, scaler_y.inverse_transform(svr.predict(scaler_X.transform(speeds)).reshape(-1, 1)), color="green", label="SVR (RBF, sample)")
 
-    plt.xlabel("speed [km/h]")
-    plt.ylabel("consumption [ml/s]")
-    plt.title("Comparison of different models")
-    plt.legend()
-    plt.grid(True)
-    plt.tight_layout()
+    plt.xlabel("speed [km/h]"), plt.ylabel("consumption [ml/s]"), plt.title("Comparison of different models"), plt.ylim(0, 10),plt.xlim(0, 160), plt.ylabel("consumption [ml/s]"), plt.legend(), plt.grid(True), plt.tight_layout()
 
     if save_path is not None:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         plt.savefig(save_path, dpi=300)
-    if show:
-        plt.show()
-    else:
-        plt.close()
 
-    return {
-        "speed_col": speed_col,
-        "fuel_col": fuel_col,
-        "metrics": metrics,
-        "models": {
-            "linear": lin_reg,
-            "poly_features": poly,
-            "poly_reg": poly_reg,
-            "svr_scaler_X": scaler_X,
-            "svr_scaler_y": scaler_y,
-            "svr": svr,
-        },
-        "plot_path": str(save_path) if save_path else None,
-        "rows_used": int(len(data)),
-        "svr_rows": int(len(sample_for_svr)),
-    }
-
-
-if __name__ == "__main__":
-    # Run with defaults if executed directly
-    run_baselines()
+    return {"speed_col": speed_col, "fuel_col": fuel_col, "metrics": metrics, "models": { "linear": lin_reg, "poly_features": poly,  "poly_reg": poly_reg, "svr_scaler_X": scaler_X, "svr_scaler_y": scaler_y, "svr": svr,},"plot_path": str(save_path) if save_path else None, "rows_used": int(len(data)), "svr_rows": int(len(sample_for_svr))}
