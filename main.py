@@ -98,13 +98,13 @@ def _combine_processed(sample_frac: float | None = 0.02) -> Path:
 # Train Random Forest
 def train_rf_all():
     print("Preparing training data from ALL processed files...")
-    combined_csv = _combine_processed(sample_frac=0.60)  # ---------- THIS TELLS YOU HOW MUCH DATA IS USED
+    combined_csv = _combine_processed(sample_frac=0.20)  # ---------- THIS TELLS YOU HOW MUCH DATA IS USED
 
     summary = fuel_rate_rf_model.train_rf( # ------------ THIS IS WHERE YOU CAN CHANGE THE NO. OF TREES AND
         input_csv=combined_csv,
         model_out= "fuel_rate_rf_all.pkl",
         plots=False,            
-        n_estimators=400,
+        n_estimators=200,
         random_state=42,
     )
     print("\n=== Random Forest Summary ===")
@@ -142,7 +142,7 @@ def main():
     elif choice == "3":
         run_baselines_all()
     else:
-        print("Please enter 1, 2, 3, or 4.")
+        print("Please enter 1, 2, or 3.")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -60,11 +60,6 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
     df, feature_cols = _build_features(df)
 
     X_train, X_test, y_train, y_test = _temporal_split(df, feature_cols, test_size=0.2)
-    # downcast to reduce RAM & speed
-    X_train = X_train.astype("float32")
-    X_test  = X_test.astype("float32")
-    y_train = y_train.astype("float32")
-    y_test  = y_test.astype("float32")
 
     # training values
     rf = RandomForestRegressor(
@@ -104,7 +99,7 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
         cur["acc_roll"] = 0.0
         cur["speed_sq"] = cur[SPEED_COL] ** 2
         # ensure exact order/columns model expects
-        return cur.reindex(columns=feature_cols, fill_value=0.0).astype("float32")
+        return cur.reindex(columns=feature_cols, fill_value=0.0)
 
     # overlay graph plot
     speed_range = np.arange(0, 151).astype(float)  # 0 -> 150 inclusive
