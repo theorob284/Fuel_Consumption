@@ -1,18 +1,5 @@
 # fuel_rate_rf_model.py
-from pathlib import Path
-import math
-import joblib
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-import time
-
-# column names
-SPEED_COL  = "TRACKS.MUNIC.SPEED_MERGED (km/h)"
-TARGET_COL = "TRACKS.MUNIC.FUEL_RATE (ml/s)"
-RPM_COL_CANDIDATES = ["TRACKS.MUNIC.MDI_OBD_RPM (rpm)", "RPM", "TRACKS.MUNIC.RPM", "MDI_RPM"]
+from common_imports import *
 
 def _build_features(df: pd.DataFrame):
     #Builds predictive features for fuel rate modelling
@@ -121,14 +108,11 @@ def train_rf(input_csv: Path,model_out: Path,plots: bool = True,n_estimators: in
 
     # labels / limits / legend
     plt.xlabel("Speed (km/h)"), plt.ylabel("Fuel Rate (ml/s)"), plt.title("Fuel vs Speed — Real Data vs Model")
-    plt.xlim(0, 150) # ---------------- CHENGE HERE TO LIMITE SPEED SHOWN ON GRAPH
-    plt.grid(True, alpha=0.25)
-    plt.legend(loc="upper left")
+    plt.xlim(0, 150) # ---------------- CHENGE HERE TO LIMIT SPEED SHOWN ON GRAPH
+    plt.grid(True, alpha=0.25), plt.legend(loc="upper left")
 
     overlay_path = model_out.parent / f"{model_out.stem}_overlay.png"
-    plt.savefig(overlay_path, dpi=300)
-    plt.close()
+    plt.savefig(overlay_path, dpi=300), plt.close()
     print(f"Overlay curve saved to: {overlay_path}")
 
-    # ---------------- RETURN SUMMARY ----------------
     return {"features": feature_cols,"r2": r2,"mae": mae,"rmse": rmse,"importances": importances,"model_path": str(model_out),"overlay_path": str(overlay_path),"n_train": len(X_train),"n_test": len(X_test),}

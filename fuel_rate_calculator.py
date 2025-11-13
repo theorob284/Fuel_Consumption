@@ -1,27 +1,27 @@
-from pathlib import Path
-import pandas as pd
-import numpy as np
-
-INPUT_DIR  = Path("fuel_data_speed_merged")    
-OUTPUT_DIR = Path("fuel_data_with_fuelrate")   
+from common_imports import *
 
 # Column names
 TIME_COL_PRIMARY   = "time"
 TIME_COL_FALLBACKS = ["received_at"]
 
-SPEED_COL = "TRACKS.MUNIC.SPEED_MERGED (km/h)"    
-FUEL_CUM_COL = "TRACKS.MUNIC.MDI_OBD_FUEL (ml)"      
-RATE_COL  = "TRACKS.MUNIC.FUEL_RATE (ml/s)"    
-
+# Segment timing parameters
 TARGET_INTERVAL = 60
-TOLERANCE = 5
-MIN_INTERVAL = TARGET_INTERVAL - TOLERANCE
-MAX_INTERVAL = TARGET_INTERVAL + TOLERANCE
+TOLERANCE       = 5
+MIN_INTERVAL    = TARGET_INTERVAL - TOLERANCE
+MAX_INTERVAL    = TARGET_INTERVAL + TOLERANCE
 
-# Outlier handling (cap after computing)
+# Outlier handling 
 PERCENTILE_FOR_CAP = 0.99
-ABS_MAX_CAP = 10.0  
-ABS_PHYS_MAX = 50.0   
+ABS_MAX_CAP        = 9.0    # soft cap (after p99 scaling)
+ABS_PHYS_MAX       = 50.0    # hard physical max to discard
+
+def compute_fuelrate_all(input_dir = SPEED_MERGED_DIR,output_dir = FUELRATE_DIR, *, delete_input = True,) -> None:
+    print("...Computing fuel rate for all merged files…")
+    batch_process_all(input_dir=input_dir, output_dir=output_dir)
+
+    if delete_input and input_dir.exists():
+        shutil.rmtree(input_dir, ignore_errors=True)
+        print(f"--> Deleted temp folder of merged speeds: {input_dir}")
 
 def _pick_time_column(df: pd.DataFrame) -> str:
     if TIME_COL_PRIMARY in df.columns:
@@ -31,7 +31,7 @@ def _pick_time_column(df: pd.DataFrame) -> str:
             return c
     raise KeyError(f"No time-like column found. Expected '{TIME_COL_PRIMARY}' or one of {TIME_COL_FALLBACKS}.")
 
-def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power: float = 1.0,  ) -> pd.Series: # float 1 → proportional to speed; try 2 to stress aero drag 
+def _compute_adjacent_minute_rates(df: pd.DataFrame,time_col: str,weight_power: float = 1.0,) -> pd.Series:
     # Parse time / cumulative fuel / speed
     t = pd.to_datetime(df[time_col], errors="coerce")
     f = pd.to_numeric(df[FUEL_CUM_COL], errors="coerce")
@@ -45,6 +45,7 @@ def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power
     fuel_pts["dt"] = fuel_pts["_t"].diff().dt.total_seconds()
     fuel_pts["dfuel"] = fuel_pts["_f"].diff()
     fuel_pts["r_seg"] = fuel_pts["dfuel"] / fuel_pts["dt"]  # ml/s
+
     # Keep only ~1 minute segments
     valid = fuel_pts["dt"].between(MIN_INTERVAL, MAX_INTERVAL, inclusive="both")
     valid_idx = valid[valid].index
@@ -52,13 +53,13 @@ def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power
     out = pd.Series(index=df.index, dtype="float64")
 
     for i in valid_idx:
-        # segment is (i-1) → i
         if i == 0:
             continue
         prev_t = fuel_pts.loc[i - 1, "_t"]
         cur_t  = fuel_pts.loc[i, "_t"]
-        seg_dt = float(fuel_pts.loc[i, "dt"])          # seconds
-        seg_r  = float(fuel_pts.loc[i, "r_seg"])       # ml/s
+        seg_dt = float(fuel_pts.loc[i, "dt"])     # seconds
+        seg_r  = float(fuel_pts.loc[i, "r_seg"])  # ml/s
+
         if not np.isfinite(seg_dt) or seg_dt <= 0 or not np.isfinite(seg_r):
             continue
 
@@ -79,7 +80,7 @@ def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power
         if total_dt <= 0:
             out.loc[idx] = seg_r  # fallback: constant within segment
             continue
-    
+
         weights = (s.loc[idx].to_numpy() ** weight_power) * dt.to_numpy()
         sum_w = float(np.sum(weights))
         if sum_w <= 0:
@@ -88,12 +89,10 @@ def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power
 
         # total fuel for the segment and per-row instantaneous rate
         F = seg_r * seg_dt  # ml
-        with np.errstate(divide='ignore', invalid='ignore'):
+        with np.errstate(divide="ignore", invalid="ignore"):
             ml_per_s = (F * (weights / sum_w)) / dt.to_numpy()
 
-        # assign
         out.loc[idx] = ml_per_s
-
     # sanity check / clean impossible values
     out = pd.to_numeric(out, errors="coerce")
     out[(out < 0) | (out > ABS_PHYS_MAX)] = np.nan
@@ -102,19 +101,20 @@ def _compute_adjacent_minute_rates(df: pd.DataFrame, time_col: str, weight_power
 def _cap_outliers(rate: pd.Series) -> pd.Series:
     r = pd.to_numeric(rate, errors="coerce")
     r[r < 0] = np.nan
+
     finite = r.replace([np.inf, -np.inf], np.nan).dropna()
     if finite.empty:
         return r
 
     p99 = float(finite.quantile(PERCENTILE_FOR_CAP))
-    # allow a bit above p99 but never past a hard absolute cap
-    soft_cap = p99 * 1.5
+
+    soft_cap = p99 * 0.7 # - THIS JUDGES WHAT P99 VALUES TO ACCEPT
     hard_cap = min(soft_cap, ABS_MAX_CAP)
     return r.clip(lower=0, upper=hard_cap)
 
-
-def add_fuel_rate_for_file(input_csv: Path, output_csv: Path, *, weight_power: float = 1.0, ) -> bool:  # float 1: proportional to speed; try 2 to stress aero drag
+def add_fuel_rate_for_file(input_csv: Path,output_csv: Path,*,weight_power: float = 1.0,) -> bool:
     df = pd.read_csv(input_csv, low_memory=False)
+
     # Ensure the two required columns exist
     required = {FUEL_CUM_COL, SPEED_COL}
     if not required.issubset(df.columns):
@@ -130,22 +130,22 @@ def add_fuel_rate_for_file(input_csv: Path, output_csv: Path, *, weight_power: f
 
     # Compute rate with speed-weighted redistribution
     raw_rate = _compute_adjacent_minute_rates(df, time_col=time_col, weight_power=weight_power)
+
     # Cap outliers and drop NaNs
     cleaned_rate = _cap_outliers(raw_rate)
-    df[RATE_COL] = cleaned_rate
-    df = df[df[RATE_COL].notna()].copy()
+    df[TARGET_COL] = cleaned_rate
+    df = df[df[TARGET_COL].notna()].copy()
 
     output_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_csv, index=False)
 
     # simple progress signal
-    finite = df[RATE_COL].replace([np.inf, -np.inf], np.nan).dropna()
+    finite = df[TARGET_COL].replace([np.inf, -np.inf], np.nan).dropna()
     p99 = float(finite.quantile(PERCENTILE_FOR_CAP)) if not finite.empty else float("nan")
     print(f"{input_csv.name} → {output_csv.name} | rows kept: {len(df):,} | p99≈{p99:.2f} ml/s")
     return True
 
-
-def batch_process_all(input_dir: Path = INPUT_DIR, output_dir: Path = OUTPUT_DIR):
+def batch_process_all(input_dir: Path = SPEED_MERGED_DIR, output_dir: Path = FUELRATE_DIR) -> None:
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
