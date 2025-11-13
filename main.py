@@ -31,7 +31,6 @@ def _combine_processed(sample_frac: float | None = 0.02) -> Path:
     print(f"Combined dataset written: {COMBINED_CSV_PATH}")
     return COMBINED_CSV_PATH
 
-
 # Train Random Forest 
 def train_rf_all():
     print("Preparing training data from ALL processed files...")
@@ -44,7 +43,6 @@ def train_rf_all():
         n_estimators=400,
         random_state=42,
     )
-
     print(f"\n=== Random Forest Summary ===\nTrain rows: {summary['n_train']} | Test rows: {summary['n_test']}\nFeatures : {summary['features']}\nR²       : {summary['r2']:.3f}\nMAE      : {summary['mae']:.3f} ml/s\nRMSE     : {summary['rmse']:.3f} ml/s")
     
 #Baselines (Linear/Poly/SVR)

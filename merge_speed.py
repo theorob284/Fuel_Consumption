@@ -1,7 +1,7 @@
 # merge_speed.py
 from common_imports import *
 
-def merge_speed_file(input_csv: Path,output_csv: Optional[Path] = None,gps_col: str = GPS_COL,obd_col: str = OBD_COL,merged_col: str = MERGED_COL,drop_original: bool = True) -> Path:
+def merge_speed_file(input_csv: Path, output_csv: Optional[Path] = None,gps_col = GPS_COL, obd_col = OBD_COL, merged_col = MERGED_COL, drop_original = True) -> Path:
     input_csv = Path(input_csv)
 
     if output_csv is None:
@@ -30,7 +30,7 @@ def merge_speed_file(input_csv: Path,output_csv: Optional[Path] = None,gps_col: 
     df.to_csv(output_csv, index=False)
     return output_csv
 
-def merge_speed_all(input_dir: Path,output_dir: Path,gps_col: str = GPS_COL,obd_col: str = OBD_COL,merged_col: str = MERGED_COL,drop_original: bool = True,) -> None:
+def merge_speed_all(input_dir: Path, output_dir: Path, gps_col = GPS_COL, obd_col = OBD_COL, merged_col = MERGED_COL, drop_original = True) -> None:
     input_dir = Path(input_dir)
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ def merge_speed_all(input_dir: Path,output_dir: Path,gps_col: str = GPS_COL,obd_
     for src in csvs:
         dst = output_dir / f"{src.stem}_merged{src.suffix}"
         try:
-            merge_speed_file(input_csv=src,output_csv=dst,gps_col=gps_col,obd_col=obd_col,merged_col=merged_col,drop_original=drop_original,)
+            merge_speed_file(input_csv=src, output_csv=dst, gps_col=gps_col, obd_col=obd_col, merged_col=merged_col, drop_original=drop_original,)
             print(f"{src.name} → {dst.name}")
         except Exception as e:
             print(f"{src.name}: {e}")
