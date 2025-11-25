@@ -1,19 +1,18 @@
 from common_imports import *
-
 # Column names
-TIME_COL_PRIMARY   = "time"
+TIME_COL_PRIMARY = "time"
 TIME_COL_FALLBACKS = ["received_at"]
 
 # Segment timing parameters
 TARGET_INTERVAL = 60
-TOLERANCE       = 5
-MIN_INTERVAL    = TARGET_INTERVAL - TOLERANCE
-MAX_INTERVAL    = TARGET_INTERVAL + TOLERANCE
+TOLERANCE = 5
+MIN_INTERVAL = TARGET_INTERVAL - TOLERANCE
+MAX_INTERVAL = TARGET_INTERVAL + TOLERANCE
 
 # Outlier handling 
-PERCENTILE_FOR_CAP = 0.99
-ABS_MAX_CAP        = 9.0    # soft cap (after p99 scaling)
-ABS_PHYS_MAX       = 50.0    # hard physical max to discard
+PERCENTILE_FOR_CAP = 0.9
+ABS_MAX_CAP = 9.0    # soft cap (after p99 scaling)
+ABS_PHYS_MAX = 50.0    # hard physical max to discard
 
 def compute_fuelrate_all(input_dir = SPEED_MERGED_DIR,output_dir = FUELRATE_DIR, *, delete_input = True,) -> None:
     print("...Computing fuel rate for all merged files…")
@@ -112,7 +111,7 @@ def _cap_outliers(rate: pd.Series) -> pd.Series:
     hard_cap = min(soft_cap, ABS_MAX_CAP)
     return r.clip(lower=0, upper=hard_cap)
 
-def add_fuel_rate_for_file(input_csv: Path,output_csv: Path,*,weight_power: float = 1.0,) -> bool:
+def add_fuel_rate_for_file(input_csv: Path,output_csv: Path,*,weight_power: float = 1.0) -> bool:
     df = pd.read_csv(input_csv, low_memory=False)
 
     # Ensure the two required columns exist

@@ -34,13 +34,13 @@ def _combine_processed(sample_frac: float | None = 0.02) -> Path:
 # Train Random Forest 
 def train_rf_all():
     print("Preparing training data from ALL processed files...")
-    combined_csv = _combine_processed(sample_frac=0.60)  # how much data is used
+    combined_csv = _combine_processed(sample_frac=0.02)  # how much data is used
 
     summary = fuel_rate_rf_model.train_rf(  # RF parameters here - This is where you can play with rf factors
         input_csv=combined_csv,
         model_out="fuel_rate_rf_all.pkl",
         plots=False,
-        n_estimators=400,
+        n_estimators=500,
         random_state=42,
     )
     print(f"\n=== Random Forest Summary ===\nTrain rows: {summary['n_train']} | Test rows: {summary['n_test']}\nFeatures : {summary['features']}\nR²       : {summary['r2']:.3f}\nMAE      : {summary['mae']:.3f} ml/s\nRMSE     : {summary['rmse']:.3f} ml/s")
@@ -54,8 +54,8 @@ def run_baselines_all():
     # This is where you change parameters of the baseline algorithm
     result = baseline_algorithm.run_baselines(
         input_folder=FUELRATE_DIR,
-        sample_frac=0.50,    # 50% for better fit; lower for speed
-        svr_sample=50_000,
+        sample_frac=0.80,    # 50% for better fit; lower for speed
+        svr_sample=10,
         save_path=out_img,
     )
 
