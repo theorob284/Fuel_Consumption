@@ -1,54 +1,44 @@
-# Fuel_Consumption User Manual
+# Fuel Consumption Prediction
 
-How to Use the Project
-----------------------------------------
-1. Put your raw CSV files into the fuel_data folder
+A machine learning project for analysing vehicle telemetry data and predicting fuel consumption from driving behaviour.
 
-These are the original files you want to process.
-----------------------------------------
-To run:
+The project processes raw vehicle CSV data, combines multiple speed sources, derives fuel-rate measurements from cumulative fuel readings, engineers driving-related features, and trains a Random Forest regression model to predict fuel consumption.
 
-main.py
-----------------------------------------
-Menu Options
+The project also includes simple linear and polynomial regression models for comparison.
 
-Option 1 – Prepare the data
+## Project Overview
 
-1. Merges speed columns
-2. Calculates fuel rate
+The raw dataset contains vehicle telemetry collected over time, including:
 
-Creates clean files
+- GPS speed
+- OBD speed
+- Cumulative fuel consumption
+- Engine RPM, where available
+- Timestamps
 
-IMPORTANT
-Run this first every time you add new data.
-This data is used in training and so only needs to be run once. After that you can use the other models whenever you want.
-----------------------------------------
-Option 2 – Train Random Forest model
+The processing pipeline converts this raw telemetry into a dataset suitable for machine learning and predicts:
 
-Uses all prepared data
-Trains the main machine-learning model
-Saves model + graph
+`Fuel rate (ml/s)`
 
-Only works after Option 1 is completed.
-----------------------------------------
-Option 3 – Train baseline models
+The primary model is a `RandomForestRegressor`.
 
-Builds simple comparison models
-Shows quick performance differences
-Saves a comparison graph
+## Pipeline
 
-Also requires Option 1.
-----------------------------------------
-Typical Workflow 
-
-Add raw files → fuel_data/
-Run Option 1
-Run Option 2 (main model)
-Optionally, Run Option 3 (baseline models)
-----------------------------------------
-All graphical models saved to the model/ folder
-----------------------------------------
-
-To change rf and baseline vales, the respective fields can be found in main.py, in their functions.
-More options can be found in their respective files.
-
+```text
+Raw CSV files
+      ↓
+Merge GPS + OBD speed
+      ↓
+Calculate fuel rate
+      ↓
+Clean invalid/outlier values
+      ↓
+Combine processed trips
+      ↓
+Engineer driving features
+      ↓
+Temporal train/test split
+      ↓
+Train Random Forest
+      ↓
+Evaluate model + generate visualisations
